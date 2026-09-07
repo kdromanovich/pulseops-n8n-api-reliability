@@ -1,0 +1,52 @@
+{
+  "success": true,
+  "status": "demo_incident_cycle_completed",
+  "run_id": "run_1788717600000_demo1234",
+  "overall_state": "down",
+  "state_summary": {
+    "overall_state": "down",
+    "healthy": 3,
+    "degraded": 1,
+    "down": 1
+  },
+  "availability_percent": 80,
+  "p95_latency_ms": 2310,
+  "event_count": 3,
+  "events": [
+    {
+      "type": "incident_opened",
+      "service_id": "auth-api",
+      "service_name": "Authentication API",
+      "previous_state": "degraded",
+      "current_state": "down",
+      "actions": {
+        "jira": "simulated_issue_created",
+        "jira_issue_key": "OPS-DEMO-501",
+        "telegram": "simulated_critical_alert"
+      }
+    },
+    {
+      "type": "incident_recovered",
+      "service_id": "payments-api",
+      "service_name": "Payments API",
+      "previous_state": "down",
+      "current_state": "healthy",
+      "actions": {
+        "jira": "simulated_issue_resolved:OPS-DEMO-421",
+        "telegram": "simulated_recovery_alert"
+      }
+    },
+    {
+      "type": "performance_degraded",
+      "service_id": "search-api",
+      "service_name": "Search API",
+      "previous_state": "healthy",
+      "current_state": "degraded",
+      "actions": {
+        "jira": "not_required",
+        "telegram": "simulated_state_change_alert"
+      }
+    }
+  ],
+  "completed_at": "2026-09-06T18:00:01.000Z"
+}

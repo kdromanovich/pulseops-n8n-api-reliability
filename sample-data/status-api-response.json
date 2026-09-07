@@ -1,0 +1,39 @@
+{
+  "success": true,
+  "generated_at": "2026-09-06T18:30:00.000Z",
+  "overall_state": "down",
+  "counts": {
+    "total": 2,
+    "healthy": 1,
+    "degraded": 0,
+    "down": 1
+  },
+  "active_incidents": [
+    {
+      "service_id": "checkout-api",
+      "service_name": "Checkout API",
+      "incident_id": "inc_checkout-api_1788717600000",
+      "jira_issue_key": "OPS-100",
+      "down_since": "2026-09-06T18:00:00.000Z",
+      "escalated": true
+    }
+  ],
+  "services": [
+    {
+      "service_id": "checkout-api",
+      "name": "Checkout API",
+      "state": "down",
+      "status_code": 503,
+      "latency_ms": 932,
+      "checked_at": "2026-09-06T18:30:00.000Z"
+    },
+    {
+      "service_id": "public-web",
+      "name": "Public Website",
+      "state": "healthy",
+      "status_code": 200,
+      "latency_ms": 185,
+      "checked_at": "2026-09-06T18:30:00.000Z"
+    }
+  ]
+}

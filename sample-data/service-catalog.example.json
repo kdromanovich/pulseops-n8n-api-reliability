@@ -1,0 +1,18 @@
+[
+  {
+    "id": "checkout-api",
+    "name": "Checkout API",
+    "url": "https://health.example.com/checkout",
+    "expected_statuses": [200],
+    "latency_threshold_ms": 600,
+    "criticality": "critical"
+  },
+  {
+    "id": "public-web",
+    "name": "Public Website",
+    "url": "https://www.example.com/health",
+    "expected_statuses": [200, 204],
+    "latency_threshold_ms": 900,
+    "criticality": "high"
+  }
+]

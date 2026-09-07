@@ -1,0 +1,44 @@
+{
+  "success": true,
+  "status": "demo_digest_completed",
+  "report_date": "2026-09-05",
+  "target_percent": 99.9,
+  "total_checks": 1440,
+  "breach_count": 2,
+  "services": [
+    {
+      "service_id": "public-web",
+      "service_name": "Public Website",
+      "checks": 288,
+      "availability_percent": 100,
+      "p95_latency_ms": 245,
+      "incidents": 0,
+      "recoveries": 0,
+      "error_budget_consumed_percent": 0,
+      "slo_met": true
+    },
+    {
+      "service_id": "auth-api",
+      "service_name": "Authentication API",
+      "checks": 288,
+      "availability_percent": 98.958,
+      "p95_latency_ms": 880,
+      "incidents": 1,
+      "recoveries": 1,
+      "error_budget_consumed_percent": 1041.7,
+      "slo_met": false
+    },
+    {
+      "service_id": "payments-api",
+      "service_name": "Payments API",
+      "checks": 288,
+      "availability_percent": 99.653,
+      "p95_latency_ms": 540,
+      "incidents": 1,
+      "recoveries": 1,
+      "error_budget_consumed_percent": 347.2,
+      "slo_met": false
+    }
+  ],
+  "delivery": "simulated_telegram"
+}

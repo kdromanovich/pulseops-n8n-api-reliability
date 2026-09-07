@@ -1,0 +1,43 @@
+{
+  "runbook_request": {
+    "action": "restart_service",
+    "service_id": "checkout-api",
+    "incident_id": "inc_checkout-api_1788717600000",
+    "run_id": "run_1788717600000_demo1234",
+    "reason": "Unexpected HTTP status 503",
+    "requested_at": "2026-09-06T18:15:00.000Z"
+  },
+  "status_page_open_request": {
+    "action": "open",
+    "incident_id": "inc_checkout-api_1788717600000",
+    "service_id": "checkout-api",
+    "service_name": "Checkout API",
+    "severity": "critical",
+    "message": "Unexpected HTTP status 503",
+    "started_at": "2026-09-06T18:00:00.000Z",
+    "jira_issue_key": "OPS-100"
+  },
+  "status_page_resolve_request": {
+    "action": "resolve",
+    "incident_id": "inc_checkout-api_1788717600000",
+    "status_page_incident_id": "STATUS-100",
+    "service_id": "checkout-api",
+    "resolved_at": "2026-09-06T18:25:00.000Z",
+    "message": "Healthy after 2 consecutive successful checks",
+    "jira_issue_key": "OPS-100"
+  },
+  "on_call_request": {
+    "event_action": "trigger",
+    "dedup_key": "inc_checkout-api_1788717600000",
+    "severity": "critical",
+    "service_id": "checkout-api",
+    "summary": "Checkout API incident escalated",
+    "source": "pulseops-n8n",
+    "details": {
+      "message": "Service has been down for at least 15 minutes",
+      "status_code": 503,
+      "latency_ms": 932,
+      "jira_issue_key": "OPS-100"
+    }
+  }
+}

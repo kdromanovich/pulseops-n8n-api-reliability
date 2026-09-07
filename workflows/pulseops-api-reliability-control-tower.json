@@ -1,0 +1,2025 @@
+{
+  "name": "PulseOps | API Reliability Control Tower",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "715cac10-d056-581b-b9f8-5479496b4218",
+      "name": "Demo: Run Incident Cycle",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1824,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "0f8426c9-b0e5-5a61-8cd5-2f4ffb26d757",
+      "name": "Schedule: Monitor Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1824,
+        32
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { job_type: 'monitor', triggered_at: new Date().toISOString() } }];"
+      },
+      "id": "53b33940-78ac-5208-be55-6ef2600ca0c2",
+      "name": "Set Job Type: Monitor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1584,
+        -64
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "3d0dfbf2-bdb2-5563-90b6-ac9e9904264c",
+      "name": "Demo: Run Daily Digest",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1824,
+        496
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "id": "29674d7f-0306-5d2f-b4e6-4f8c5926d3d1",
+      "name": "Schedule: Daily SLO Digest (09:00 UTC)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1824,
+        688
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { job_type: 'digest', triggered_at: new Date().toISOString() } }];"
+      },
+      "id": "d2f573bb-ef11-58ed-a5f5-7eeb47fdbb26",
+      "name": "Set Job Type: Daily Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1584,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Load non-secret settings from Variables, environment, or the local fallback. Keep tokens in Credentials.\nconst text = (value, fallback = '') => String(value ?? fallback).trim();\nconst number = (value, fallback, min, max) => {\n  const normalized = String(value ?? '').trim();\n  if (!normalized) return fallback;\n  const parsed = Number(normalized);\n  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;\n};\nconst integer = (value, fallback, min, max) => Math.round(number(value, fallback, min, max));\nconst boolean = (value, fallback = false) => {\n  const normalized = text(value, fallback ? 'true' : 'false').toLowerCase();\n  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;\n  if (['false', '0', 'no', 'off'].includes(normalized)) return false;\n  return fallback;\n};\nconst clean = (value, max = 200) => text(value).replace(/[\\u0000-\\u001F\\u007F]/g, ' ').replace(/\\s+/g, ' ').slice(0, max);\nconst isSafePublicHttps = (value) => {\n  try {\n    const parsed = new URL(value);\n    const host = parsed.hostname.toLowerCase().replace(/^\\[|\\]$/g, '');\n    const privateHost = host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local') || host.includes(':') || /^127\\./.test(host) || /^10\\./.test(host) || /^192\\.168\\./.test(host) || /^169\\.254\\./.test(host) || /^172\\.(1[6-9]|2\\d|3[01])\\./.test(host);\n    return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !privateHost;\n  } catch {\n    return false;\n  }\n};\n\n// Community Edition fallback: edit only these non-secret values if\n// neither n8n Variables nor self-hosted environment access is available.\nconst LOCAL_CONFIG = {\n  demo_mode: 'true',\n  service_catalog_json: '',\n  request_timeout_ms: '',\n  down_after_failures: '',\n  recover_after_successes: '',\n  escalation_minutes: '',\n  escalation_retry_minutes: '',\n  rolling_sample_limit: '',\n  metrics_retention_days: '',\n  slo_target_percent: '',\n  telegram_chat_id: '',\n  jira_base_url: '',\n  jira_project_key: '',\n  jira_issue_type: '',\n  jira_resolve_transition_id: ''\n};\nconst setting = (name, localKey, fallback = '') => {\n  let candidate;\n  try { candidate = $vars?.[name]; } catch {}\n  if (candidate !== undefined && candidate !== null && String(candidate).trim() !== '') return candidate;\n  try { candidate = $env?.[name]; } catch {}\n  if (candidate !== undefined && candidate !== null && String(candidate).trim() !== '') return candidate;\n  candidate = LOCAL_CONFIG[localKey];\n  return candidate !== undefined && candidate !== null && String(candidate).trim() !== '' ? candidate : fallback;\n};\n\nconst now = Date.now();\nconst demoMode = boolean(setting('PULSEOPS_DEMO_MODE', 'demo_mode', 'true'), true);\nconst DEMO_SERVICES = [\n  { id: 'public-web', name: 'Public Website', url: 'https://example.com', expected_statuses: [200], latency_threshold_ms: 700, criticality: 'high', demo_result: { status_code: 200, latency_ms: 182 }, demo_previous: { state: 'healthy', consecutive_failures: 0, consecutive_successes: 5 } },\n  { id: 'auth-api', name: 'Authentication API', url: 'https://api.example.com/auth/health', expected_statuses: [200], latency_threshold_ms: 500, criticality: 'critical', demo_result: { status_code: 503, latency_ms: 2310, error: 'Service Unavailable' }, demo_previous: { state: 'degraded', consecutive_failures: 1, consecutive_successes: 0 } },\n  { id: 'payments-api', name: 'Payments API', url: 'https://api.example.com/payments/health', expected_statuses: [200], latency_threshold_ms: 650, criticality: 'critical', demo_result: { status_code: 200, latency_ms: 314 }, demo_previous: { state: 'down', consecutive_failures: 3, consecutive_successes: 1, incident_id: 'inc_demo_payments', jira_issue_key: 'OPS-DEMO-421', status_page_incident_id: 'status_demo_payments', down_since: now - 22 * 60 * 1000 } },\n  { id: 'search-api', name: 'Search API', url: 'https://api.example.com/search/health', expected_statuses: [200], latency_threshold_ms: 800, criticality: 'medium', demo_result: { status_code: 200, latency_ms: 1248 }, demo_previous: { state: 'healthy', consecutive_failures: 0, consecutive_successes: 8 } },\n  { id: 'webhook-worker', name: 'Webhook Worker', url: 'https://api.example.com/webhooks/health', expected_statuses: [200, 204], latency_threshold_ms: 900, criticality: 'high', demo_result: { status_code: 204, latency_ms: 271 }, demo_previous: { state: 'healthy', consecutive_failures: 0, consecutive_successes: 12 } }\n];\n\nlet serviceCatalog = DEMO_SERVICES;\nif (!demoMode) {\n  const rawCatalog = text(setting('PULSEOPS_SERVICE_CATALOG_JSON', 'service_catalog_json'));\n  if (!rawCatalog) throw new Error('Missing live configuration: PULSEOPS_SERVICE_CATALOG_JSON');\n  try {\n    serviceCatalog = JSON.parse(rawCatalog);\n  } catch {\n    throw new Error('PULSEOPS_SERVICE_CATALOG_JSON must be valid JSON');\n  }\n}\nif (!Array.isArray(serviceCatalog) || serviceCatalog.length === 0 || serviceCatalog.length > 100) {\n  throw new Error('Service catalog must contain between 1 and 100 services');\n}\n\nconst seenIds = new Set();\nconst services = serviceCatalog.map((raw, index) => {\n  const id = clean(raw?.id, 64).toLowerCase();\n  const name = clean(raw?.name, 120);\n  const url = text(raw?.url).slice(0, 1500);\n  const expected = Array.isArray(raw?.expected_statuses) ? raw.expected_statuses.map(Number).filter(value => Number.isInteger(value) && value >= 100 && value <= 599) : [];\n  const criticality = clean(raw?.criticality || 'medium', 20).toLowerCase();\n  if (!/^[a-z0-9][a-z0-9-]{1,63}$/.test(id)) throw new Error(`Service ${index + 1} has an invalid id`);\n  if (seenIds.has(id)) throw new Error(`Duplicate service id: ${id}`);\n  if (!name) throw new Error(`Service ${id} is missing a name`);\n  if (!isSafePublicHttps(url)) throw new Error(`Service ${id} must use a safe public HTTPS URL`);\n  if (!expected.length) throw new Error(`Service ${id} needs at least one expected HTTP status`);\n  if (!['low', 'medium', 'high', 'critical'].includes(criticality)) throw new Error(`Service ${id} has an invalid criticality`);\n  seenIds.add(id);\n  return {\n    id,\n    name,\n    url,\n    expected_statuses: [...new Set(expected)],\n    latency_threshold_ms: integer(raw?.latency_threshold_ms, 1000, 50, 120000),\n    criticality,\n    ...(demoMode ? { demo_result: raw.demo_result || {}, demo_previous: raw.demo_previous || {} } : {})\n  };\n});\n\nconst config = {\n  demo_mode: demoMode,\n  request_timeout_ms: integer(setting('PULSEOPS_REQUEST_TIMEOUT_MS', 'request_timeout_ms'), 8000, 1000, 60000),\n  down_after_failures: integer(setting('PULSEOPS_DOWN_AFTER_FAILURES', 'down_after_failures'), 2, 1, 10),\n  recover_after_successes: integer(setting('PULSEOPS_RECOVER_AFTER_SUCCESSES', 'recover_after_successes'), 2, 1, 10),\n  escalation_minutes: integer(setting('PULSEOPS_ESCALATION_MINUTES', 'escalation_minutes'), 15, 1, 1440),\n  escalation_retry_minutes: integer(setting('PULSEOPS_ESCALATION_RETRY_MINUTES', 'escalation_retry_minutes'), 5, 1, 120),\n  rolling_sample_limit: integer(setting('PULSEOPS_ROLLING_SAMPLE_LIMIT', 'rolling_sample_limit'), 288, 10, 10000),\n  metrics_retention_days: integer(setting('PULSEOPS_METRICS_RETENTION_DAYS', 'metrics_retention_days'), 14, 1, 90),\n  slo_target_percent: number(setting('PULSEOPS_SLO_TARGET_PERCENT', 'slo_target_percent'), 99.9, 90, 99.999),\n  telegram_chat_id: text(setting('PULSEOPS_TELEGRAM_CHAT_ID', 'telegram_chat_id', demoMode ? 'DEMO_CHAT_ID' : '')),\n  jira_base_url: text(setting('PULSEOPS_JIRA_BASE_URL', 'jira_base_url', demoMode ? 'https://your-domain.atlassian.net' : '')).replace(/\\/+$/, ''),\n  jira_project_key: clean(setting('PULSEOPS_JIRA_PROJECT_KEY', 'jira_project_key'), 20).toUpperCase() || (demoMode ? 'OPS' : ''),\n  jira_issue_type: clean(setting('PULSEOPS_JIRA_ISSUE_TYPE', 'jira_issue_type'), 80) || 'Task',\n  jira_resolve_transition_id: clean(setting('PULSEOPS_JIRA_RESOLVE_TRANSITION_ID', 'jira_resolve_transition_id'), 40) || (demoMode ? '31' : ''),\n  services\n};\n\nif (!demoMode) {\n  const missing = [];\n  if (!config.telegram_chat_id) missing.push('PULSEOPS_TELEGRAM_CHAT_ID');\n  if (!config.jira_base_url) missing.push('PULSEOPS_JIRA_BASE_URL');\n  if (!config.jira_project_key) missing.push('PULSEOPS_JIRA_PROJECT_KEY');\n  if (!config.jira_resolve_transition_id) missing.push('PULSEOPS_JIRA_RESOLVE_TRANSITION_ID');\n  if (missing.length) throw new Error(`Missing live configuration: ${missing.join(', ')}`);\n  if (!isSafePublicHttps(config.jira_base_url)) throw new Error('PULSEOPS_JIRA_BASE_URL must use a safe public HTTPS URL');\n  if (!/^[A-Z][A-Z0-9_]{1,19}$/.test(config.jira_project_key)) throw new Error('PULSEOPS_JIRA_PROJECT_KEY is invalid');\n}\n\nreturn [{ json: {\n  ...$input.first().json,\n  config,\n  run_id: `run_${now}_${Math.random().toString(36).slice(2, 10)}`\n} }];"
+      },
+      "id": "e901eb58-832f-5b03-96c9-7eb1be6bad3d",
+      "name": "Load Runtime and Service Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1344,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "50abf825-8baa-5c8a-920d-3f93ee8d8a39",
+              "leftValue": "={{ $json.job_type === 'digest' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "501565a5-ccb4-5f8c-8463-65395b8f8a01",
+      "name": "Is This a Digest Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -864,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const root = $input.first().json;\nreturn root.config.services.map((service, index) => ({\n  json: {\n    config: root.config,\n    run_id: root.run_id,\n    triggered_at: root.triggered_at,\n    service_index: index,\n    service\n  },\n  pairedItem: { item: 0 }\n}));"
+      },
+      "id": "473a975d-6ffd-5e4c-b021-7fb3c0e2e630",
+      "name": "Fan Out Service Catalog",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const started = Date.now();\nreturn $input.all().map((item, index) => ({\n  json: { ...item.json, check_started_at_ms: started + index },\n  pairedItem: { item: index }\n}));"
+      },
+      "id": "3ef91bc3-9be3-5129-87c9-34ebbf189bac",
+      "name": "Start Probe Timer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5c1e4f1d-db30-584a-873b-1fe50e6510c4",
+              "leftValue": "={{ $json.config.demo_mode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "56738c0b-e2de-53c1-aa76-d4b2ca807ddf",
+      "name": "Use Demo Probes?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -416,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const result = data.service.demo_result || {};\n  const statusCode = Number(result.status_code || 0);\n  const success = data.service.expected_statuses.includes(statusCode);\n  return {\n    json: {\n      ...data,\n      check: {\n        success,\n        status_code: statusCode,\n        latency_ms: Number(result.latency_ms || 0),\n        error: success ? null : (result.error || `Unexpected HTTP status ${statusCode}`),\n        checked_at: new Date().toISOString(),\n        response_excerpt: success ? '{\"status\":\"ok\"}' : String(result.error || 'unavailable'),\n        provider: 'deterministic_demo'\n      }\n    },\n    pairedItem: { item: index }\n  };\n});"
+      },
+      "id": "d899ed6c-c528-5b81-897d-ad352297a182",
+      "name": "Generate Demo Probe Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -176,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.service.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text",
+              "outputPropertyName": "body"
+            }
+          },
+          "timeout": "={{ $json.config.request_timeout_ms }}"
+        }
+      },
+      "id": "13db756f-7502-531a-b501-9a8c4f039f59",
+      "name": "HTTP: Probe Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -176,
+        32
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "44e0f39c-4ef0-5d4a-a1f0-15c6b9f1ff68",
+      "name": "Merge: Probe Context",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        48,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const statusCode = Number(data.statusCode ?? data.status_code ?? 0);\n  const expected = Array.isArray(data.service?.expected_statuses) ? data.service.expected_statuses : [200];\n  const latency = Math.max(0, Date.now() - Number(data.check_started_at_ms || Date.now()));\n  const transportError = data.error?.message || data.errorMessage || data.message || null;\n  const success = expected.includes(statusCode) && !transportError;\n  const rawBody = typeof data.body === 'string' ? data.body : JSON.stringify(data.body ?? '');\n  const excerpt = rawBody\n    .replace(/([\"']?(?:authorization|api[_-]?key|token|password)[\"']?\\s*:\\s*)[\"'][^\"']*[\"']/gi, '$1\"[REDACTED]\"')\n    .replace(/((?:authorization|api[_-]?key|token|password)\\s*[=:]\\s*)(?:Bearer\\s+|Basic\\s+)?[^,\\s}&]+/gi, '$1[REDACTED]')\n    .replace(/\\bBearer\\s+[A-Za-z0-9._~+/-]{8,}={0,2}/gi, 'Bearer [REDACTED]')\n    .replace(/\\beyJ[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\.[A-Za-z0-9_-]{8,}\\b/g, '[REDACTED]')\n    .replace(/\\b\\d{6,12}:[A-Za-z0-9_-]{20,}\\b/g, '[REDACTED]')\n    .replace(/[\\u0000-\\u001F\\u007F]/g, ' ')\n    .slice(0, 300);\n  return {\n    json: {\n      config: data.config,\n      run_id: data.run_id,\n      triggered_at: data.triggered_at,\n      service_index: data.service_index,\n      service: data.service,\n      check: {\n        success,\n        status_code: statusCode,\n        latency_ms: latency,\n        error: success ? null : (transportError || `Unexpected HTTP status ${statusCode || 'unknown'}`),\n        checked_at: new Date().toISOString(),\n        response_excerpt: excerpt,\n        provider: 'live_http'\n      }\n    },\n    pairedItem: { item: index }\n  };\n});"
+      },
+      "id": "b7545b19-1a7a-5829-9a6d-8e2aeace8041",
+      "name": "Normalize Live Probe Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(item => item.json);\nif (!items.length) return [];\nconst checks = items.map(item => ({ service: item.service, check: item.check }));\nconst latencies = checks.map(item => item.check.latency_ms).sort((a, b) => a - b);\nconst percentile = (list, p) => list.length ? list[Math.min(list.length - 1, Math.max(0, Math.ceil(list.length * p) - 1))] : 0;\nconst successful = checks.filter(item => item.check.success).length;\nreturn [{ json: {\n  config: items[0].config,\n  run_id: items[0].run_id,\n  triggered_at: items[0].triggered_at,\n  checks,\n  probe_summary: {\n    total: checks.length,\n    successful,\n    failed: checks.length - successful,\n    availability_percent: checks.length ? Math.round(successful / checks.length * 10000) / 100 : 0,\n    p50_latency_ms: percentile(latencies, 0.5),\n    p95_latency_ms: percentile(latencies, 0.95)\n  }\n} }];"
+      },
+      "id": "d63e6d19-9ec6-5728-89ac-c2ea6a7a5eae",
+      "name": "Aggregate Probe Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        496,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const batch = $input.first().json;\nconst cfg = batch.config;\nconst now = Date.now();\nconst store = $getWorkflowStaticData('global');\nstore.pulseops_state = store.pulseops_state || {};\nstore.pulseops_metrics = store.pulseops_metrics || {};\nconst day = new Date(now).toISOString().slice(0, 10);\nstore.pulseops_metrics[day] = store.pulseops_metrics[day] || {};\n\nif (!cfg.demo_mode) {\n  const cutoff = new Date(now - cfg.metrics_retention_days * 86400000).toISOString().slice(0, 10);\n  for (const metricDay of Object.keys(store.pulseops_metrics)) {\n    if (metricDay < cutoff) delete store.pulseops_metrics[metricDay];\n  }\n}\n\nconst events = [];\nconst states = [];\nfor (const row of batch.checks) {\n  const service = row.service;\n  const check = row.check;\n  const fallbackPrevious = {\n    state: 'unknown', consecutive_failures: 0, consecutive_successes: 0,\n    incident_id: null, jira_issue_key: null, status_page_incident_id: null,\n    down_since: null, escalated: false, escalation_attempts: 0,\n    last_escalation_attempt_at: null\n  };\n  const previous = cfg.demo_mode\n    ? { ...fallbackPrevious, ...(service.demo_previous || {}) }\n    : { ...fallbackPrevious, ...(store.pulseops_state[service.id] || {}) };\n  const latencyDegraded = check.success && check.latency_ms > service.latency_threshold_ms;\n  const failures = check.success ? 0 : Number(previous.consecutive_failures || 0) + 1;\n  const successes = check.success ? Number(previous.consecutive_successes || 0) + 1 : 0;\n\n  let nextState;\n  if (!check.success) nextState = failures >= cfg.down_after_failures ? 'down' : 'degraded';\n  else if (previous.state === 'down' && successes < cfg.recover_after_successes) nextState = 'down';\n  else if (latencyDegraded) nextState = 'degraded';\n  else nextState = 'healthy';\n\n  let incidentId = previous.incident_id || null;\n  let jiraIssueKey = previous.jira_issue_key || null;\n  let statusPageIncidentId = previous.status_page_incident_id || null;\n  let downSince = previous.down_since || null;\n  let escalated = Boolean(previous.escalated);\n  let escalationAttempts = Number(previous.escalation_attempts || 0);\n  let lastEscalationAttemptAt = previous.last_escalation_attempt_at || null;\n  let event = null;\n\n  if (nextState === 'down' && previous.state !== 'down') {\n    incidentId = `inc_${service.id}_${now}`;\n    jiraIssueKey = null;\n    statusPageIncidentId = null;\n    downSince = now;\n    escalated = false;\n    escalationAttempts = 0;\n    lastEscalationAttemptAt = null;\n    event = {\n      type: 'incident_opened', severity: 'critical', title: `${service.name} is DOWN`,\n      message: check.error || `HTTP ${check.status_code}`, incident_id: incidentId,\n      jira_issue_key: null, status_page_incident_id: null\n    };\n  } else if (previous.state === 'down' && nextState !== 'down') {\n    event = {\n      type: 'incident_recovered', severity: nextState === 'healthy' ? 'info' : 'warning',\n      title: `${service.name} recovered from outage`,\n      message: nextState === 'healthy'\n        ? `Healthy after ${successes} consecutive successful checks`\n        : `Reachable after ${successes} successful checks, but latency remains above threshold`,\n      incident_id: previous.incident_id,\n      jira_issue_key: previous.jira_issue_key || null,\n      status_page_incident_id: previous.status_page_incident_id || null\n    };\n    incidentId = null;\n    jiraIssueKey = null;\n    statusPageIncidentId = null;\n    downSince = null;\n    escalated = false;\n    escalationAttempts = 0;\n    lastEscalationAttemptAt = null;\n  } else if (nextState === 'degraded' && ['healthy', 'unknown'].includes(previous.state)) {\n    event = {\n      type: latencyDegraded ? 'performance_degraded' : 'service_degraded', severity: 'warning',\n      title: `${service.name} is DEGRADED`,\n      message: latencyDegraded ? `Latency ${check.latency_ms}ms exceeds ${service.latency_threshold_ms}ms` : (check.error || 'First failed check'),\n      incident_id: null, jira_issue_key: null, status_page_incident_id: null\n    };\n  } else if (previous.state === 'degraded' && nextState === 'healthy') {\n    event = {\n      type: 'service_recovered', severity: 'info', title: `${service.name} returned to normal`,\n      message: `Latency ${check.latency_ms}ms`, incident_id: null,\n      jira_issue_key: null, status_page_incident_id: null\n    };\n  } else if (previous.state === 'down' && nextState === 'down' && !check.success && downSince) {\n    const retryDue = !escalated && (!lastEscalationAttemptAt || now - Number(lastEscalationAttemptAt) >= cfg.escalation_retry_minutes * 60000);\n    if (retryDue && now - Number(downSince) >= cfg.escalation_minutes * 60000) {\n      escalationAttempts += 1;\n      lastEscalationAttemptAt = now;\n      event = {\n        type: 'incident_escalated', severity: 'critical', title: `${service.name} incident escalated`,\n        message: `Service has been down for at least ${cfg.escalation_minutes} minutes`,\n        incident_id: previous.incident_id, jira_issue_key: previous.jira_issue_key || null,\n        status_page_incident_id: previous.status_page_incident_id || null\n      };\n    }\n  }\n\n  const next = {\n    service_id: service.id,\n    service_name: service.name,\n    state: nextState,\n    previous_state: previous.state,\n    consecutive_failures: failures,\n    consecutive_successes: successes,\n    incident_id: incidentId,\n    jira_issue_key: jiraIssueKey,\n    status_page_incident_id: statusPageIncidentId,\n    down_since: downSince,\n    escalated,\n    escalation_attempts: escalationAttempts,\n    last_escalation_attempt_at: lastEscalationAttemptAt,\n    last_status_code: check.status_code,\n    last_latency_ms: check.latency_ms,\n    checked_at: check.checked_at\n  };\n\n  if (event) events.push({\n    ...event,\n    service_id: service.id,\n    service_name: service.name,\n    criticality: service.criticality,\n    previous_state: previous.state,\n    current_state: nextState,\n    status_code: check.status_code,\n    latency_ms: check.latency_ms,\n    occurred_at: check.checked_at\n  });\n  states.push(next);\n\n  if (!cfg.demo_mode) {\n    store.pulseops_state[service.id] = next;\n    const metric = store.pulseops_metrics[day][service.id] || {\n      name: service.name, checks: 0, successes: 0, failures: 0,\n      latencies: [], incidents: 0, recoveries: 0\n    };\n    metric.checks += 1;\n    check.success ? metric.successes += 1 : metric.failures += 1;\n    metric.latencies.push(check.latency_ms);\n    if (metric.latencies.length > cfg.rolling_sample_limit) metric.latencies = metric.latencies.slice(-cfg.rolling_sample_limit);\n    if (event?.type === 'incident_opened') metric.incidents += 1;\n    if (event?.type === 'incident_recovered') metric.recoveries += 1;\n    store.pulseops_metrics[day][service.id] = metric;\n  }\n}\n\nconst overallState = states.some(state => state.state === 'down')\n  ? 'down'\n  : states.some(state => state.state === 'degraded') ? 'degraded' : 'healthy';\nreturn [{ json: {\n  ...batch,\n  state_summary: {\n    overall_state: overallState,\n    healthy: states.filter(state => state.state === 'healthy').length,\n    degraded: states.filter(state => state.state === 'degraded').length,\n    down: states.filter(state => state.state === 'down').length\n  },\n  service_states: states,\n  events,\n  event_count: events.length\n} }];"
+      },
+      "id": "5d725d99-bf0c-533c-8402-a2ad8e04c9ac",
+      "name": "Evaluate Incident State Machine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "1e36e16e-8cef-5ed9-b56a-cfd78f3a59da",
+              "leftValue": "={{ $json.event_count > 0 }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b667b90e-6d1a-5460-adfe-b5253e1ca3f3",
+      "name": "Were State Changes Detected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        944,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: {\n  success: true,\n  status: data.config.demo_mode ? 'demo_stable' : 'stable',\n  run_id: data.run_id,\n  checked_services: data.probe_summary.total,\n  overall_state: data.state_summary.overall_state,\n  state_summary: data.state_summary,\n  availability_percent: data.probe_summary.availability_percent,\n  p95_latency_ms: data.probe_summary.p95_latency_ms,\n  events: [],\n  completed_at: new Date().toISOString()\n} }];"
+      },
+      "id": "b60bc66f-e36f-53af-a236-554b897b0085",
+      "name": "Return Stable Monitoring Snapshot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const batch = $input.first().json;\nreturn batch.events.map((event, index) => ({\n  json: {\n    config: batch.config,\n    run_id: batch.run_id,\n    probe_summary: batch.probe_summary,\n    state_summary: batch.state_summary,\n    event\n  },\n  pairedItem: { item: 0 }\n}));"
+      },
+      "id": "a7c7c9bc-6621-51ab-8241-8224ecd7f9e1",
+      "name": "Fan Out Reliability Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "5d2f9898-fe15-54e5-996a-c872ced8e69f",
+              "leftValue": "={{ $json.config.demo_mode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "aa2ce7f9-b570-5728-9c60-6470fec83f70",
+      "name": "Use Demo Incident Integrations?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1392,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const event = data.event;\n  let actions;\n  if (event.type === 'incident_opened') actions = { jira: 'simulated_issue_created', jira_issue_key: 'OPS-DEMO-501', telegram: 'simulated_critical_alert' };\n  else if (event.type === 'incident_recovered') actions = { jira: `simulated_issue_resolved:${event.jira_issue_key || 'unknown'}`, telegram: 'simulated_recovery_alert' };\n  else if (event.type === 'incident_escalated') actions = { jira: 'simulated_escalation_comment', telegram: 'simulated_escalation_alert' };\n  else actions = { jira: 'not_required', telegram: 'simulated_state_change_alert' };\n  return { json: { ...data, actions }, pairedItem: { item: index } };\n});"
+      },
+      "id": "a5ef0532-76a8-5187-8eb3-bee474d1e61b",
+      "name": "Simulate Incident Integrations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1616,
+        -336
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all().map(item => item.json);\nif (!items.length) return [];\nreturn [{ json: {\n  success: true,\n  status: 'demo_incident_cycle_completed',\n  run_id: items[0].run_id,\n  overall_state: items[0].state_summary.overall_state,\n  state_summary: items[0].state_summary,\n  availability_percent: items[0].probe_summary.availability_percent,\n  p95_latency_ms: items[0].probe_summary.p95_latency_ms,\n  event_count: items.length,\n  events: items.map(item => ({ ...item.event, actions: item.actions })),\n  completed_at: new Date().toISOString()\n} }];"
+      },
+      "id": "89a269aa-ea1d-5b25-94a2-c51822aebc1a",
+      "name": "Return Demo Incident Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1840,
+        -336
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "20939282-2746-5b98-95db-709cce8f3271",
+              "leftValue": "={{ $json.event.type === 'incident_opened' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "b46b7abf-f623-559c-936f-826943e1c53b",
+      "name": "Is This a New Incident?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1616,
+        -96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ `${$json.config.jira_base_url}/rest/api/3/issue` }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { fields: { project: { key: $json.config.jira_project_key }, summary: `[PulseOps] ${$json.event.title}`, description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: `${$json.event.message}. Status: ${$json.event.status_code}; latency: ${$json.event.latency_ms}ms; incident: ${$json.event.incident_id}` }] }] }, issuetype: { name: $json.config.jira_issue_type }, labels: ['pulseops', 'n8n', $json.event.service_id] } } }}",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "2a13ef22-f7c9-5655-8077-3f7658b155b9",
+      "name": "Jira: Create Incident",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1840,
+        -144
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "3c67c967-7a50-5633-a0f1-1e8d529fe89b",
+      "name": "Merge: Jira Creation",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        2064,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const statusCode = Number(data.statusCode ?? data.status_code ?? 0);\n  const body = data.body && typeof data.body === 'object' ? data.body : {};\n  const issueKey = body.key || data.key || data.jira_issue_key || null;\n  const requestFailed = Boolean(data.error || data.errorMessage) || statusCode < 200 || statusCode >= 300 || !issueKey;\n  const store = $getWorkflowStaticData('global');\n  if (!requestFailed && store.pulseops_state?.[data.event.service_id]) {\n    store.pulseops_state[data.event.service_id].jira_issue_key = issueKey;\n  }\n  return { json: {\n    ...data,\n    jira_issue_key: requestFailed ? null : issueKey,\n    integration_results: { jira_creation: requestFailed ? 'failed' : 'created' },\n    alert_text: `🚨 INCIDENT OPENED\\n\\n${data.event.service_name} is DOWN\\n${data.event.message}\\nHTTP: ${data.event.status_code}\\nLatency: ${data.event.latency_ms}ms\\nIncident: ${data.event.incident_id}\\nJira: ${requestFailed ? 'creation failed' : issueKey}`\n  }, pairedItem: { item: index } };\n});"
+      },
+      "id": "d1fa5a20-de78-5a31-b2ad-f9b288eb0dcf",
+      "name": "Persist Jira Key and Prepare Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.config.telegram_chat_id }}",
+        "text": "={{ $json.alert_text }}",
+        "additionalFields": {}
+      },
+      "id": "29a8e228-9400-58e4-8437-5bf18eb3a2d2",
+      "name": "Telegram: Send Incident Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4080,
+        -240
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Finalize Incident Integrations').item.json;\nconst response = $input.first().json;\nconst telegramFailed = response.ok === false || Boolean(response.error || response.errorMessage);\nconst integrationFailed = telegramFailed || Object.values(base.integration_results || {}).some(value => value === 'failed');\nreturn [{ json: {\n  success: !integrationFailed,\n  status: integrationFailed ? 'incident_opened_with_integration_errors' : 'incident_opened',\n  run_id: base.run_id,\n  event: base.event,\n  jira_issue_key: base.jira_issue_key,\n  integration_results: { ...base.integration_results, telegram_status: telegramFailed ? 'failed' : 'sent' },\n  completed_at: new Date().toISOString()\n} }];"
+      },
+      "id": "6e44df3b-9b8c-5828-b5dc-77f9f076c032",
+      "name": "Return Incident Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4304,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "2c6f8d5e-1733-5bad-a9bb-8194230cb15e",
+              "leftValue": "={{ $json.event.type === 'incident_recovered' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f5a86a8c-8a8a-54e9-a006-357f4850a6aa",
+      "name": "Is This an Incident Recovery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1840,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "07e64934-7b81-56b6-a0fd-8f71e54b1702",
+              "leftValue": "={{ Boolean($json.event.jira_issue_key) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "198b2d66-ef9b-57bf-b9e1-c8f3211a58e5",
+      "name": "Is a Jira Ticket Linked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2064,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ `${$json.config.jira_base_url}/rest/api/3/issue/${encodeURIComponent($json.event.jira_issue_key)}/transitions` }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { transition: { id: $json.config.jira_resolve_transition_id } } }}",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "6e3bb21c-6e92-57d2-9feb-02d635936c2c",
+      "name": "Jira: Resolve Incident",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2288,
+        16
+      ],
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "9637f1a1-6345-5f49-b68b-701dd3a0218f",
+      "name": "Merge: Jira Recovery",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        2512,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const attempted = Boolean(data.event.jira_issue_key);\n  const statusCode = Number(data.statusCode ?? data.status_code ?? 0);\n  const jiraFailed = attempted && (Boolean(data.error || data.errorMessage) || statusCode < 200 || statusCode >= 300);\n  const jiraResolution = !attempted ? 'not_linked' : jiraFailed ? 'failed' : 'resolved';\n  const stateText = data.event.current_state === 'healthy' ? 'healthy again' : 'reachable, but still degraded';\n  const icon = data.event.current_state === 'healthy' ? '✅' : '⚠️';\n  return { json: {\n    ...data,\n    integration_results: { jira_resolution: jiraResolution },\n    alert_text: `${icon} INCIDENT RECOVERED\\n\\n${data.event.service_name} is ${stateText}\\nLatency: ${data.event.latency_ms}ms\\nIncident: ${data.event.incident_id || 'unknown'}\\nJira: ${data.event.jira_issue_key || 'not linked'} (${jiraResolution})`\n  }, pairedItem: { item: index } };\n});"
+      },
+      "id": "d1dedc39-a606-5a9f-ba10-ee0455d4d1d6",
+      "name": "Prepare Recovery Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2736,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.config.telegram_chat_id }}",
+        "text": "={{ $json.alert_text }}",
+        "additionalFields": {}
+      },
+      "id": "2d609791-8d14-53f6-b1ba-d34c20dc0d2c",
+      "name": "Telegram: Send Recovery Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3632,
+        64
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Finalize Recovery Integrations').item.json;\nconst response = $input.first().json;\nconst telegramFailed = response.ok === false || Boolean(response.error || response.errorMessage);\nconst integrationFailed = telegramFailed || Object.values(base.integration_results || {}).some(value => value === 'failed');\nreturn [{ json: {\n  success: !integrationFailed,\n  status: integrationFailed ? 'incident_recovered_with_integration_errors' : 'incident_recovered',\n  run_id: base.run_id,\n  event: base.event,\n  jira_issue_key: base.event.jira_issue_key,\n  integration_results: { ...base.integration_results, telegram_status: telegramFailed ? 'failed' : 'sent' },\n  completed_at: new Date().toISOString()\n} }];"
+      },
+      "id": "cf126b4d-1a38-5636-8cc6-067a39ab01f0",
+      "name": "Return Recovery Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3856,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const icon = data.event.type === 'service_recovered' ? '✅' : data.event.severity === 'critical' ? '🚨' : '⚠️';\n  return { json: {\n    ...data,\n    alert_text: `${icon} SERVICE STATE CHANGE\\n\\n${data.event.title}\\n${data.event.message}\\nHTTP: ${data.event.status_code}\\nLatency: ${data.event.latency_ms}ms`\n  }, pairedItem: { item: index } };\n});"
+      },
+      "id": "0d2ac36e-73d9-5f0b-91c0-4279e2f8d5f5",
+      "name": "Prepare State-Change Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2288,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.config.telegram_chat_id }}",
+        "text": "={{ $json.alert_text }}",
+        "additionalFields": {}
+      },
+      "id": "085d14d2-9805-59db-8bc8-5cc76446a80c",
+      "name": "Telegram: Send State-Change Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2512,
+        448
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Prepare State-Change Alert').item.json;\nconst response = $input.first().json;\nreturn [{ json: { success: true, status: base.event.type, run_id: base.run_id, event: base.event, telegram_status: response.ok === false || response.error ? 'failed' : 'sent', completed_at: new Date().toISOString() } }];"
+      },
+      "id": "52284688-096a-562c-bf41-5143ca6fe817",
+      "name": "Return State-Change Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2736,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst cfg = data.config;\nconst store = $getWorkflowStaticData('global');\nconst reportDate = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);\nconst demoMetrics = {\n  'public-web': { name: 'Public Website', checks: 288, successes: 288, failures: 0, latencies: [170, 182, 194, 211, 245], incidents: 0, recoveries: 0 },\n  'auth-api': { name: 'Authentication API', checks: 288, successes: 285, failures: 3, latencies: [240, 275, 310, 490, 880], incidents: 1, recoveries: 1 },\n  'payments-api': { name: 'Payments API', checks: 288, successes: 287, failures: 1, latencies: [220, 248, 271, 314, 540], incidents: 1, recoveries: 1 },\n  'search-api': { name: 'Search API', checks: 288, successes: 288, failures: 0, latencies: [340, 410, 580, 790, 1248], incidents: 0, recoveries: 0 },\n  'webhook-worker': { name: 'Webhook Worker', checks: 288, successes: 288, failures: 0, latencies: [180, 210, 240, 271, 390], incidents: 0, recoveries: 0 }\n};\nconst source = cfg.demo_mode ? demoMetrics : (store.pulseops_metrics?.[reportDate] || {});\nconst percentile = (values, p) => { const sorted = [...values].sort((a, b) => a - b); return sorted.length ? sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * p) - 1)] : 0; };\nconst rows = Object.entries(source).map(([id, metric]) => {\n  const availability = metric.checks ? metric.successes / metric.checks * 100 : 0;\n  const failurePercent = Math.max(0, 100 - availability);\n  const allowedFailure = Math.max(0.0001, 100 - cfg.slo_target_percent);\n  return {\n    service_id: id,\n    service_name: metric.name || id,\n    checks: metric.checks || 0,\n    availability_percent: Math.round(availability * 1000) / 1000,\n    p95_latency_ms: percentile(metric.latencies || [], 0.95),\n    incidents: metric.incidents || 0,\n    recoveries: metric.recoveries || 0,\n    error_budget_consumed_percent: Math.round(failurePercent / allowedFailure * 1000) / 10,\n    slo_met: availability >= cfg.slo_target_percent\n  };\n});\nconst totalChecks = rows.reduce((sum, row) => sum + row.checks, 0);\nconst breaches = rows.filter(row => !row.slo_met);\nconst fullMessage = [\n  `📊 DAILY SLO DIGEST — ${reportDate}`,\n  `Target: ${cfg.slo_target_percent}%`,\n  `Checks: ${totalChecks}`,\n  `SLO breaches: ${breaches.length}`,\n  '',\n  ...rows.map(row => `${row.slo_met ? '✅' : '❌'} ${row.service_name}: ${row.availability_percent}% | p95 ${row.p95_latency_ms}ms | incidents ${row.incidents}`)\n].join('\\n');\nconst message = fullMessage.length <= 3900\n  ? fullMessage\n  : `${fullMessage.slice(0, 3800)}\\n… digest truncated for Telegram; inspect the workflow output for every service.`;\nreturn [{ json: {\n  config: cfg,\n  status: rows.length ? 'digest_ready' : 'no_metrics',\n  report_date: reportDate,\n  target_percent: cfg.slo_target_percent,\n  total_checks: totalChecks,\n  breach_count: breaches.length,\n  services: rows,\n  message\n} }];"
+      },
+      "id": "801a1dfa-d99b-5374-bea9-d0c9a5f462fc",
+      "name": "Build Daily SLO Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "3bcaa3f5-05e9-5a56-afc0-093dd53dcfce",
+              "leftValue": "={{ $json.config.demo_mode }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e0a47ad9-c63d-5469-8fd8-236b4c519fb7",
+      "name": "Use Demo Digest Delivery?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -640,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nreturn [{ json: {\n  success: true,\n  status: 'demo_digest_completed',\n  report_date: data.report_date,\n  target_percent: data.target_percent,\n  total_checks: data.total_checks,\n  breach_count: data.breach_count,\n  services: data.services,\n  delivery: 'simulated_telegram',\n  message_preview: data.message\n} }];"
+      },
+      "id": "a6be817b-8b82-520b-8e76-14644d34c2be",
+      "name": "Return Demo SLO Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.config.telegram_chat_id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {}
+      },
+      "id": "ad6ee4a1-2998-5080-8a26-a2745051709c",
+      "name": "Telegram: Send Daily SLO Digest",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -416,
+        640
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Build Daily SLO Digest').first().json;\nconst response = $input.first().json;\nreturn [{ json: {\n  success: response.ok !== false && !response.error,\n  status: 'daily_digest_completed',\n  report_date: base.report_date,\n  target_percent: base.target_percent,\n  total_checks: base.total_checks,\n  breach_count: base.breach_count,\n  services: base.services,\n  delivery: response.ok === false || response.error ? 'telegram_failed' : 'telegram_sent'\n} }];"
+      },
+      "id": "ac86013e-e334-528e-91cb-2001ea7be24a",
+      "name": "Return Daily Digest Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        640
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst text = (value, fallback = '') => String(value ?? fallback).trim();\nconst boolean = (value, fallback = false) => {\n  const normalized = text(value, fallback ? 'true' : 'false').toLowerCase();\n  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;\n  if (['false', '0', 'no', 'off'].includes(normalized)) return false;\n  return fallback;\n};\nconst isSafePublicHttps = (value) => {\n  try {\n    const parsed = new URL(value);\n    const host = parsed.hostname.toLowerCase().replace(/^\\[|\\]$/g, '');\n    const privateHost = host === 'localhost' || host === '0.0.0.0' || host.endsWith('.local') || host.includes(':') || /^127\\./.test(host) || /^10\\./.test(host) || /^192\\.168\\./.test(host) || /^169\\.254\\./.test(host) || /^172\\.(1[6-9]|2\\d|3[01])\\./.test(host);\n    return parsed.protocol === 'https:' && !parsed.username && !parsed.password && !privateHost;\n  } catch {\n    return false;\n  }\n};\n\nconst LOCAL_INTEGRATIONS = {\n  runbook_enabled: '',\n  runbook_webhook_url: '',\n  status_page_webhook_url: '',\n  on_call_webhook_url: ''\n};\nconst setting = (name, localKey, fallback = '') => {\n  let candidate;\n  try { candidate = $vars?.[name]; } catch {}\n  if (candidate !== undefined && candidate !== null && String(candidate).trim() !== '') return candidate;\n  try { candidate = $env?.[name]; } catch {}\n  if (candidate !== undefined && candidate !== null && String(candidate).trim() !== '') return candidate;\n  candidate = LOCAL_INTEGRATIONS[localKey];\n  return candidate !== undefined && candidate !== null && String(candidate).trim() !== '' ? candidate : fallback;\n};\n\nconst demoMode = data.config.demo_mode;\nconst integrations = {\n  runbook_enabled: boolean(setting('PULSEOPS_RUNBOOK_ENABLED', 'runbook_enabled', demoMode ? 'true' : 'false'), demoMode),\n  runbook_webhook_url: text(setting('PULSEOPS_RUNBOOK_WEBHOOK_URL', 'runbook_webhook_url', demoMode ? 'https://automation.example.com/v1/runbooks/restart-service' : '')),\n  status_page_webhook_url: text(setting('PULSEOPS_STATUS_PAGE_WEBHOOK_URL', 'status_page_webhook_url', demoMode ? 'https://status-api.example.com/v1/incidents' : '')),\n  on_call_webhook_url: text(setting('PULSEOPS_ON_CALL_WEBHOOK_URL', 'on_call_webhook_url', demoMode ? 'https://oncall.example.com/v1/events' : ''))\n};\n\nif (!demoMode) {\n  const required = ['status_page_webhook_url', 'on_call_webhook_url'];\n  if (integrations.runbook_enabled) required.push('runbook_webhook_url');\n  const missing = required.filter(key => !integrations[key]);\n  if (missing.length) throw new Error(`Missing live integration configuration: ${missing.join(', ')}`);\n  for (const key of required) {\n    if (!isSafePublicHttps(integrations[key])) throw new Error(`${key} must use a safe public HTTPS URL`);\n  }\n}\n\nreturn [{ json: { ...data, config: { ...data.config, integrations } } }];"
+      },
+      "id": "5bff47ee-7fb4-5e94-80a7-01706815188c",
+      "name": "Load Integration Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1104,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "pulseops-current-status",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "a949aa86-4ed2-5ef7-b4aa-a923cef8323e",
+      "name": "API: Current Reliability Status",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1824,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const store = $getWorkflowStaticData('global');\nconst states = Object.values(store.pulseops_state || {}).sort((a, b) => String(a.service_name).localeCompare(String(b.service_name)));\nconst overall = states.some(state => state.state === 'down')\n  ? 'down'\n  : states.some(state => state.state === 'degraded') ? 'degraded' : states.length ? 'healthy' : 'unknown';\nconst asIso = (value) => value ? new Date(Number(value)).toISOString() : null;\nreturn [{ json: {\n  success: true,\n  generated_at: new Date().toISOString(),\n  overall_state: overall,\n  counts: {\n    total: states.length,\n    healthy: states.filter(state => state.state === 'healthy').length,\n    degraded: states.filter(state => state.state === 'degraded').length,\n    down: states.filter(state => state.state === 'down').length\n  },\n  active_incidents: states.filter(state => state.incident_id).map(state => ({\n    service_id: state.service_id,\n    service_name: state.service_name,\n    incident_id: state.incident_id,\n    jira_issue_key: state.jira_issue_key,\n    down_since: asIso(state.down_since),\n    escalated: Boolean(state.escalated)\n  })),\n  services: states.map(state => ({\n    service_id: state.service_id,\n    name: state.service_name,\n    state: state.state,\n    status_code: state.last_status_code,\n    latency_ms: state.last_latency_ms,\n    checked_at: state.checked_at\n  }))\n} }];"
+      },
+      "id": "bb75db0b-0547-5d52-b514-d612b3bca9af",
+      "name": "Read Persisted Reliability State",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1584,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "3b151340-fe3d-5513-bdfb-d1f402246917",
+      "name": "Respond with Reliability Status",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        -1344,
+        944
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "7cf05da5-0b0d-554a-95e2-dbbcc18e7cbc",
+              "leftValue": "={{ $json.config.integrations.runbook_enabled && $json.event.criticality === 'critical' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "565958a3-b0b6-51eb-afc7-1b99d759aae5",
+      "name": "Should Automated Runbook Run?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2512,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.config.integrations.runbook_webhook_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { action: 'restart_service', service_id: $json.event.service_id, incident_id: $json.event.incident_id, run_id: $json.run_id, reason: $json.event.message, requested_at: $now.toISO() } }}",
+        "options": {
+          "timeout": 20000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "354fc16a-1ad3-5930-9c44-a4f9cef098fd",
+      "name": "Runbook: Dispatch Remediation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2736,
+        -320
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "f0c0ff65-b813-5b88-b7b4-ddb1770f9e7e",
+      "name": "Merge: Runbook Result",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        2960,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const attempted = data.config.integrations.runbook_enabled && data.event.criticality === 'critical';\n  const statusCode = Number(data.statusCode ?? data.status_code ?? 0);\n  const body = data.body && typeof data.body === 'object' ? data.body : {};\n  const runbookFailed = attempted && (Boolean(data.error || data.errorMessage) || statusCode < 200 || statusCode >= 300);\n  const runbookStatus = !attempted ? 'not_required' : runbookFailed ? 'failed' : 'dispatched';\n  const runbookExecutionId = body.execution_id || body.job_id || body.run_id || data.execution_id || data.job_id || null;\n  return { json: {\n    ...data,\n    integration_results: {\n      ...(data.integration_results || {}),\n      runbook_status: runbookStatus,\n      runbook_execution_id: runbookExecutionId\n    },\n    status_page_payload: {\n      action: 'open', incident_id: data.event.incident_id,\n      service_id: data.event.service_id, service_name: data.event.service_name,\n      severity: data.event.severity, message: data.event.message,\n      started_at: data.event.occurred_at, jira_issue_key: data.jira_issue_key || null\n    }\n  }, pairedItem: { item: index } };\n});"
+      },
+      "id": "fde34040-2d1a-55b9-8d30-734cee3811d0",
+      "name": "Prepare Incident Control Actions",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3184,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.config.integrations.status_page_webhook_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.status_page_payload }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "058c5b31-3bbc-5edb-856e-097652672743",
+      "name": "Status Page: Open Incident",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3408,
+        -320
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "d057397a-e1f0-5d9a-8605-72894bc22e12",
+      "name": "Merge: Status Page Open",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        3632,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const statusCode = Number(data.statusCode ?? data.status_code ?? 0);\n  const body = data.body && typeof data.body === 'object' ? data.body : {};\n  const statusPageFailed = Boolean(data.error || data.errorMessage) || statusCode < 200 || statusCode >= 300;\n  const statusPageId = body.status_page_incident_id || body.incident_id || body.id || data.status_page_incident_id || null;\n  const store = $getWorkflowStaticData('global');\n  if (!statusPageFailed && statusPageId && store.pulseops_state?.[data.event.service_id]) {\n    store.pulseops_state[data.event.service_id].status_page_incident_id = statusPageId;\n  }\n  const statusText = statusPageFailed ? 'update failed' : 'incident published';\n  const suffix = `\\nRunbook: ${data.integration_results.runbook_status}${data.integration_results.runbook_execution_id ? ` (${data.integration_results.runbook_execution_id})` : ''}\\nStatus page: ${statusText}`;\n  return { json: {\n    ...data,\n    integration_results: {\n      ...data.integration_results,\n      status_page_status: statusPageFailed ? 'failed' : 'opened',\n      status_page_incident_id: statusPageFailed ? null : statusPageId\n    },\n    alert_text: `${data.alert_text}${suffix}`\n  }, pairedItem: { item: index } };\n});"
+      },
+      "id": "0da72d60-4289-59e7-8607-bff64b6941ad",
+      "name": "Finalize Incident Integrations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3856,
+        -240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.config.integrations.status_page_webhook_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { action: 'resolve', incident_id: $json.event.incident_id, status_page_incident_id: $json.event.status_page_incident_id || null, service_id: $json.event.service_id, resolved_at: $json.event.occurred_at, message: $json.event.message, jira_issue_key: $json.event.jira_issue_key || null } }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "8d1a7e96-a1e8-5398-bdfb-2ad895cd68d5",
+      "name": "Status Page: Resolve Incident",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2960,
+        -16
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "5f220278-d9bc-5a9f-844f-23dcbdf683f3",
+      "name": "Merge: Status Page Recovery",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        3184,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const statusCode = Number(data.statusCode ?? data.status_code ?? 0);\n  const failed = Boolean(data.error || data.errorMessage) || statusCode < 200 || statusCode >= 300;\n  return { json: {\n    ...data,\n    integration_results: {\n      ...(data.integration_results || {}),\n      status_page_status: failed ? 'failed' : 'resolved'\n    },\n    alert_text: `${data.alert_text}\\nStatus page: ${failed ? 'resolution failed' : 'resolved'}`\n  }, pairedItem: { item: index } };\n});"
+      },
+      "id": "d42739f7-94cf-56d3-8b9d-c9e2b6a0d0c7",
+      "name": "Finalize Recovery Integrations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3408,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f02326c7-38fd-5708-a9fc-e0d0a72cf744",
+              "leftValue": "={{ $json.event.type === 'incident_escalated' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6249216c-41ac-585e-a69f-6ecccb390b90",
+      "name": "Is This an Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2064,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.config.integrations.on_call_webhook_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { event_action: 'trigger', dedup_key: $json.event.incident_id, severity: 'critical', service_id: $json.event.service_id, summary: $json.event.title, source: 'pulseops-n8n', details: { message: $json.event.message, status_code: $json.event.status_code, latency_ms: $json.event.latency_ms, jira_issue_key: $json.event.jira_issue_key } } }}",
+        "options": {
+          "timeout": 15000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "autodetect"
+            }
+          }
+        }
+      },
+      "id": "edaa1fc9-d59b-5145-8def-9b2cb556ab75",
+      "name": "On-Call: Trigger Escalation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2288,
+        208
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "id": "bd05d0a0-1c81-510d-a2bb-5d0fa5ae70e0",
+      "name": "Merge: On-Call Escalation",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.1,
+      "position": [
+        2512,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item, index) => {\n  const data = item.json;\n  const statusCode = Number(data.statusCode ?? data.status_code ?? 0);\n  const failed = Boolean(data.error || data.errorMessage) || statusCode < 200 || statusCode >= 300;\n  const store = $getWorkflowStaticData('global');\n  if (store.pulseops_state?.[data.event.service_id]) {\n    store.pulseops_state[data.event.service_id].escalated = !failed;\n  }\n  return { json: {\n    ...data,\n    on_call_status: failed ? 'failed' : 'triggered',\n    alert_text: `🚨 INCIDENT ESCALATED\\n\\n${data.event.service_name} remains DOWN\\n${data.event.message}\\nIncident: ${data.event.incident_id}\\nJira: ${data.event.jira_issue_key || 'not linked'}\\nOn-call: ${failed ? 'trigger failed; retry remains eligible' : 'engineer paged'}`\n  }, pairedItem: { item: index } };\n});"
+      },
+      "id": "7c1e701b-ba18-5267-8563-02d71af634ea",
+      "name": "Prepare Escalation Alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2736,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.config.telegram_chat_id }}",
+        "text": "={{ $json.alert_text }}",
+        "additionalFields": {}
+      },
+      "id": "90c80028-dd1a-5443-8469-02193cedccbc",
+      "name": "Telegram: Send Escalation Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2960,
+        256
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = $('Prepare Escalation Alert').item.json;\nconst response = $input.first().json;\nconst telegramFailed = response.ok === false || Boolean(response.error || response.errorMessage);\nconst failed = base.on_call_status === 'failed' || telegramFailed;\nreturn [{ json: {\n  success: !failed,\n  status: failed ? 'incident_escalation_with_integration_errors' : 'incident_escalated',\n  run_id: base.run_id,\n  event: base.event,\n  on_call_status: base.on_call_status,\n  telegram_status: telegramFailed ? 'failed' : 'sent',\n  completed_at: new Date().toISOString()\n} }];"
+      },
+      "id": "d0491540-d984-544a-87bb-e71e19d0fc47",
+      "name": "Return Escalation Outcome",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3184,
+        256
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## PulseOps — API reliability control tower\n\nA stateful operations workflow for service probes, incident deduplication, Jira lifecycle, remediation runbooks, status-page updates, on-call escalation, Telegram alerts, a protected status API, and daily SLO reporting.\n\nDemo mode is enabled by default and makes no external calls.",
+        "height": 330,
+        "width": 650,
+        "color": 4
+      },
+      "id": "270f63e5-f6d5-5129-a2e2-328234a69c18",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1856,
+        -608
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Two deterministic demos\n\n1. Run **Demo: Run Incident Cycle**. Five probes produce one new outage, one outage recovery, and one latency degradation.\n2. Run **Demo: Run Daily Digest** to build an SLO report from synthetic daily metrics.\n\nDemo paths never call Jira, Telegram, runbook, status-page, or on-call endpoints.",
+        "height": 330,
+        "width": 620,
+        "color": 7
+      },
+      "id": "6d498160-9e52-52e5-8594-353cbd7878eb",
+      "name": "Demo Instructions",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -1168,
+        -608
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Live setup\n\n1. Configure the documented `PULSEOPS_*` keys through Variables, permitted self-hosted environment access, or the non-secret Community fallback blocks.\n2. Assign Jira Basic Auth, three Header Auth credentials, Telegram credentials, and Header Auth for the status API.\n3. Test each integration in a non-production environment.\n4. Set `PULSEOPS_DEMO_MODE=false`, then activate the workflow.\n\nMonitor: every 5 minutes. Digest: daily at 09:00 UTC.",
+        "height": 400,
+        "width": 650,
+        "color": 5
+      },
+      "id": "8495ec7f-dcd2-55ed-8744-0186b0646f56",
+      "name": "Live Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        -608
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Stateful incident policy\n\n- First failed check → `degraded`\n- Configured consecutive failures → `down` and one incident\n- Configured consecutive successes → outage recovery\n- Slow successful response → performance degradation\n- Long outage → retryable on-call escalation\n- Unchanged state → no notification\n\nJira and status-page identifiers are persisted for the matching recovery event.",
+        "height": 360,
+        "width": 600,
+        "color": 3
+      },
+      "id": "579a8065-31d5-53f9-b583-5f4661b9c03b",
+      "name": "State Machine Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        656,
+        -608
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Production boundary\n\nWorkflow static data keeps the demo self-contained. With queue mode, multiple workers, high service counts, or strict durability requirements, move state, incident locks, and metrics to PostgreSQL or Redis and add a distributed lock per service.\n\nUse fast HTTPS health endpoints that expose no secrets. Network egress controls are required to address DNS rebinding and SSRF.",
+        "height": 360,
+        "width": 640,
+        "color": 6
+      },
+      "id": "abbf3321-1e34-5351-91be-d629ca76f27a",
+      "name": "Production Notes",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2640,
+        448
+      ]
+    }
+  ],
+  "connections": {
+    "Demo: Run Incident Cycle": {
+      "main": [
+        [
+          {
+            "node": "Set Job Type: Monitor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: Monitor Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Set Job Type: Monitor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Demo: Run Daily Digest": {
+      "main": [
+        [
+          {
+            "node": "Set Job Type: Daily Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule: Daily SLO Digest (09:00 UTC)": {
+      "main": [
+        [
+          {
+            "node": "Set Job Type: Daily Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Job Type: Monitor": {
+      "main": [
+        [
+          {
+            "node": "Load Runtime and Service Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Job Type: Daily Digest": {
+      "main": [
+        [
+          {
+            "node": "Load Runtime and Service Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Runtime and Service Config": {
+      "main": [
+        [
+          {
+            "node": "Load Integration Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Integration Config": {
+      "main": [
+        [
+          {
+            "node": "Is This a Digest Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is This a Digest Run?": {
+      "main": [
+        [
+          {
+            "node": "Build Daily SLO Digest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fan Out Service Catalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan Out Service Catalog": {
+      "main": [
+        [
+          {
+            "node": "Start Probe Timer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start Probe Timer": {
+      "main": [
+        [
+          {
+            "node": "Use Demo Probes?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Demo Probes?": {
+      "main": [
+        [
+          {
+            "node": "Generate Demo Probe Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP: Probe Service",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge: Probe Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Demo Probe Results": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Probe Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP: Probe Service": {
+      "main": [
+        [
+          {
+            "node": "Merge: Probe Context",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: Probe Context": {
+      "main": [
+        [
+          {
+            "node": "Normalize Live Probe Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Live Probe Result": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Probe Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Probe Results": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Incident State Machine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Incident State Machine": {
+      "main": [
+        [
+          {
+            "node": "Were State Changes Detected?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Were State Changes Detected?": {
+      "main": [
+        [
+          {
+            "node": "Fan Out Reliability Events",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Stable Monitoring Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fan Out Reliability Events": {
+      "main": [
+        [
+          {
+            "node": "Use Demo Incident Integrations?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Demo Incident Integrations?": {
+      "main": [
+        [
+          {
+            "node": "Simulate Incident Integrations",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is This a New Incident?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Incident Integrations": {
+      "main": [
+        [
+          {
+            "node": "Return Demo Incident Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is This a New Incident?": {
+      "main": [
+        [
+          {
+            "node": "Jira: Create Incident",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge: Jira Creation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is This an Incident Recovery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Create Incident": {
+      "main": [
+        [
+          {
+            "node": "Merge: Jira Creation",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: Jira Creation": {
+      "main": [
+        [
+          {
+            "node": "Persist Jira Key and Prepare Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Jira Key and Prepare Alert": {
+      "main": [
+        [
+          {
+            "node": "Should Automated Runbook Run?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Should Automated Runbook Run?": {
+      "main": [
+        [
+          {
+            "node": "Runbook: Dispatch Remediation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge: Runbook Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Incident Control Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Runbook: Dispatch Remediation": {
+      "main": [
+        [
+          {
+            "node": "Merge: Runbook Result",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: Runbook Result": {
+      "main": [
+        [
+          {
+            "node": "Prepare Incident Control Actions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Incident Control Actions": {
+      "main": [
+        [
+          {
+            "node": "Status Page: Open Incident",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge: Status Page Open",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Page: Open Incident": {
+      "main": [
+        [
+          {
+            "node": "Merge: Status Page Open",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: Status Page Open": {
+      "main": [
+        [
+          {
+            "node": "Finalize Incident Integrations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Incident Integrations": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Incident Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send Incident Alert": {
+      "main": [
+        [
+          {
+            "node": "Return Incident Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is This an Incident Recovery?": {
+      "main": [
+        [
+          {
+            "node": "Is a Jira Ticket Linked?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is This an Escalation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is a Jira Ticket Linked?": {
+      "main": [
+        [
+          {
+            "node": "Jira: Resolve Incident",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge: Jira Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Recovery Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jira: Resolve Incident": {
+      "main": [
+        [
+          {
+            "node": "Merge: Jira Recovery",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: Jira Recovery": {
+      "main": [
+        [
+          {
+            "node": "Prepare Recovery Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Recovery Alert": {
+      "main": [
+        [
+          {
+            "node": "Status Page: Resolve Incident",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge: Status Page Recovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Page: Resolve Incident": {
+      "main": [
+        [
+          {
+            "node": "Merge: Status Page Recovery",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: Status Page Recovery": {
+      "main": [
+        [
+          {
+            "node": "Finalize Recovery Integrations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finalize Recovery Integrations": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Recovery Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send Recovery Alert": {
+      "main": [
+        [
+          {
+            "node": "Return Recovery Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is This an Escalation?": {
+      "main": [
+        [
+          {
+            "node": "On-Call: Trigger Escalation",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge: On-Call Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare State-Change Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On-Call: Trigger Escalation": {
+      "main": [
+        [
+          {
+            "node": "Merge: On-Call Escalation",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge: On-Call Escalation": {
+      "main": [
+        [
+          {
+            "node": "Prepare Escalation Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Escalation Alert": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send Escalation Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send Escalation Alert": {
+      "main": [
+        [
+          {
+            "node": "Return Escalation Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare State-Change Alert": {
+      "main": [
+        [
+          {
+            "node": "Telegram: Send State-Change Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send State-Change Alert": {
+      "main": [
+        [
+          {
+            "node": "Return State-Change Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Daily SLO Digest": {
+      "main": [
+        [
+          {
+            "node": "Use Demo Digest Delivery?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Use Demo Digest Delivery?": {
+      "main": [
+        [
+          {
+            "node": "Return Demo SLO Digest",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Telegram: Send Daily SLO Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram: Send Daily SLO Digest": {
+      "main": [
+        [
+          {
+            "node": "Return Daily Digest Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "API: Current Reliability Status": {
+      "main": [
+        [
+          {
+            "node": "Read Persisted Reliability State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Persisted Reliability State": {
+      "main": [
+        [
+          {
+            "node": "Respond with Reliability Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC"
+  },
+  "tags": []
+}

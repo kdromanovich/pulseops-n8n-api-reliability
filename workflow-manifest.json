@@ -1,0 +1,59 @@
+{
+  "project": "PulseOps",
+  "workflow_name": "PulseOps | API Reliability Control Tower",
+  "repository_slug": "pulseops-n8n-api-reliability",
+  "repository": "https://github.com/kdromanovich/pulseops-n8n-api-reliability",
+  "workflow_file": "workflows/pulseops-api-reliability-control-tower.json",
+  "description": "Stateful API health monitoring, incident lifecycle automation, integration control, protected status API, and daily SLO reporting in n8n.",
+  "tested_with": {
+    "n8n": "2.17.5",
+    "node_js": ">=20",
+    "python": ">=3.10"
+  },
+  "inventory": {
+    "total_nodes": 69,
+    "functional_nodes": 64,
+    "sticky_notes": 5,
+    "connections": 72,
+    "code_nodes": 29,
+    "http_request_nodes": 7,
+    "telegram_nodes": 5
+  },
+  "entry_points": [
+    "Demo: Run Incident Cycle",
+    "Schedule: Monitor Every 5 Minutes",
+    "Demo: Run Daily Digest",
+    "Schedule: Daily SLO Digest (09:00 UTC)",
+    "API: Current Reliability Status"
+  ],
+  "demo_expectations": {
+    "service_checks": 5,
+    "incident_events": 3,
+    "daily_metric_checks": 1440,
+    "slo_breaches": 2,
+    "external_calls": 0
+  },
+  "configuration": {
+    "prefix": "PULSEOPS_",
+    "precedence": [
+      "n8n Variables",
+      "permitted self-hosted environment",
+      "non-secret local fallback",
+      "demo defaults"
+    ]
+  },
+  "credentials_required_for_live_mode": [
+    "Jira HTTP Basic Auth",
+    "Runbook HTTP Header Auth",
+    "Status page HTTP Header Auth",
+    "On-call HTTP Header Auth",
+    "Telegram API",
+    "Status API Header Auth"
+  ],
+  "development_checks": [
+    "python3 scripts/validate_workflow.py",
+    "node scripts/check-code-syntax.mjs",
+    "node scripts/run-demo-path.mjs",
+    "python3 -m unittest discover -s tests -v"
+  ]
+}
