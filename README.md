@@ -1,5 +1,7 @@
 # PulseOps — API Reliability Control Tower
 
+[![Workflow checks](https://github.com/kdromanovich/pulseops-n8n-api-reliability/actions/workflows/validate.yml/badge.svg)](https://github.com/kdromanovich/pulseops-n8n-api-reliability/actions/workflows/validate.yml)
+
 [Русская версия](README_RU.md) · [Architecture](docs/ARCHITECTURE.md) · [Setup](docs/SETUP.md) · [Data contracts](docs/DATA_CONTRACTS.md)
 
 An n8n workflow for API health monitoring, incident lifecycle management, remediation, status updates, escalation, and daily SLO reporting.
